@@ -14,7 +14,7 @@ load_dotenv()
 
 CHROMA_DIR  = "./chroma_store"
 COLLECTION  = "shl_assessments"
-EMBED_MODEL = "all-MiniLM-L6-v2"
+
 
 # ── Clients (loaded once at startup) ─────────────────────────────────────────
 _groq   = Groq(api_key=os.environ["GROQ_API_KEY"])
