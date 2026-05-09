@@ -1,27 +1,20 @@
-Set-Content startup.py @'
-"""
-startup.py — Builds Chroma index from catalog.json if not already built.
-Called once at app startup via lifespan in main.py.
-"""
-
-import json
+ï»¿import json
 import chromadb
 from chromadb.utils import embedding_functions
 
 CATALOG_FILE = "catalog.json"
 CHROMA_DIR   = "./chroma_store"
 COLLECTION   = "shl_assessments"
-EMBED_MODEL  = "all-MiniLM-L6-v2"
 
 
 def build_if_needed():
     client = chromadb.PersistentClient(path=CHROMA_DIR)
-    ef     = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
+    ef     = embedding_functions.ONNXMiniLM_L6_V2()
 
     try:
         col = client.get_collection(name=COLLECTION, embedding_function=ef)
         if col.count() > 0:
-            print(f"[startup] Chroma already has {col.count()} vectors — skipping rebuild.")
+            print(f"[startup] Chroma already has {col.count()} vectors â€” skipping rebuild.")
             return
     except Exception:
         pass
@@ -85,4 +78,4 @@ def build_if_needed():
         )
         print(f"[startup] Embedded [{end}/{len(documents)}]")
 
-    print(f"[startup] Done — {col.count()} vectors ready.")
+    print(f"[startup] Done â€” {col.count()} vectors ready.")
