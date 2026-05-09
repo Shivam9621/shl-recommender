@@ -19,7 +19,8 @@ EMBED_MODEL = "all-MiniLM-L6-v2"
 # ── Clients (loaded once at startup) ─────────────────────────────────────────
 _groq   = Groq(api_key=os.environ["GROQ_API_KEY"])
 _chroma = chromadb.PersistentClient(path=CHROMA_DIR)
-_ef     = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
+# _ef     = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
+_ef  = embedding_functions.ONNXMiniLM_L6_V2()
 _col    = _chroma.get_collection(name=COLLECTION, embedding_function=_ef)
 
 # ── System prompt ─────────────────────────────────────────────────────────────

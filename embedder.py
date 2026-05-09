@@ -11,7 +11,7 @@ from chromadb.utils import embedding_functions
 CATALOG_FILE  = "catalog.json"
 CHROMA_DIR    = "./chroma_store"          # persisted to disk
 COLLECTION    = "shl_assessments"
-EMBED_MODEL   = "all-MiniLM-L6-v2"       # fast, free, 384-dim
+# EMBED_MODEL   = "all-MiniLM-L6-v2"       # fast, free, 384-dim
 
 
 def build_document(item: dict) -> str:
@@ -62,9 +62,7 @@ def main():
     client = chromadb.PersistentClient(path=CHROMA_DIR)
 
     # Use sentence-transformers embedding function (runs locally, free)
-    ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=EMBED_MODEL
-    )
+    ef = embedding_functions.ONNXMiniLM_L6_V2()
 
     # Delete existing collection if re-running
     try:
