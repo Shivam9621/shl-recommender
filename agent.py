@@ -12,16 +12,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-CHROMA_DIR  = "./chroma_store"
-COLLECTION  = "shl_assessments"
+CHROMA_DIR = "./chroma_store"
+COLLECTION = "shl_assessments"
+
+# ── Lazy globals (initialized in init()) ─────────────────────────────────────
+_groq = None
+_col  = None
 
 
-# ── Clients (loaded once at startup) ─────────────────────────────────────────
-_groq   = Groq(api_key=os.environ["GROQ_API_KEY"])
-_chroma = chromadb.PersistentClient(path=CHROMA_DIR)
-# _ef     = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
-_ef  = embedding_functions.ONNXMiniLM_L6_V2()
-_col    = _chroma.get_collection(name=COLLECTION, embedding_function=_ef)
+def init():
+    """Called once from main.py lifespan after startup.build_if_needed()."""
+    global _groq, _col
+    _groq = Groq(api_key=os.environ["GROQ_API_KEY"])
+    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    ef     = embedding_functions.ONNXMiniLM_L6_V2()
+    _col   = client.get_collection(name=COLLECTION, embedding_function=ef)
+    print(f"[agent] Loaded collection with {_col.count()} vectors.")
+
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an SHL assessment recommender assistant. Your ONLY job is to help hiring managers and recruiters find the right SHL assessments for their open roles.
@@ -43,7 +50,7 @@ RECOMMENDATION RULES:
 - A job description pasted by the user counts as full context — recommend immediately
 - Use ONLY the assessments listed in the CATALOG CONTEXT section
 - Copy name and url EXACTLY from the catalog context — do not modify them
-- Set end_of_conversation to true only after you have provided a shortlist AND the user seems satisfied or says thanks/done
+- Set end_of_conversation to true only after you have provided a shortlist AND the user seems satisfied
 
 RESPONSE FORMAT — always return exactly this JSON shape and nothing else:
 {
@@ -59,10 +66,7 @@ test_type is the letter code from the assessment test_types field (A/B/C/D/E/K/P
 """
 
 
-# ── Retrieval ─────────────────────────────────────────────────────────────────
-
 def retrieve(query: str, n: int = 15) -> list[dict]:
-    """Semantic search over ChromaDB. Returns top-n catalog items."""
     results = _col.query(query_texts=[query], n_results=n)
     items = []
     for meta in results["metadatas"][0]:
@@ -90,15 +94,11 @@ def build_catalog_context(items: list[dict]) -> str:
 
 
 def extract_search_query(messages: list[dict]) -> str:
-    """Combine all user messages into one search string for retrieval."""
     user_msgs = [m["content"] for m in messages if m["role"] == "user"]
     return " ".join(user_msgs)[-500:]
 
 
-# ── Guardrails ────────────────────────────────────────────────────────────────
-
 def is_off_topic(text: str) -> bool:
-    """Fast regex check before hitting the LLM."""
     patterns = [
         r"\bsalar(y|ies)\b", r"\bcompensation\b",
         r"\blegal\b", r"\blawsuit\b", r"\bdiscrimination\b",
@@ -113,12 +113,8 @@ def is_off_topic(text: str) -> bool:
     return any(re.search(p, t) for p in patterns)
 
 
-# ── LLM call ──────────────────────────────────────────────────────────────────
-
 def call_llm(messages: list[dict], catalog_context: str) -> dict:
-    """Calls Groq Llama-3.3-70B and returns parsed JSON dict."""
     system = f"{SYSTEM_PROMPT}\n\n{catalog_context}"
-
     groq_messages = [{"role": "system", "content": system}]
     for m in messages:
         groq_messages.append({"role": m["role"], "content": m["content"]})
@@ -131,8 +127,6 @@ def call_llm(messages: list[dict], catalog_context: str) -> dict:
     )
 
     raw = response.choices[0].message.content.strip()
-
-    # Strip markdown fences the model sometimes adds
     raw = re.sub(r"^```json\s*", "", raw, flags=re.MULTILINE)
     raw = re.sub(r"^```\s*",     "", raw, flags=re.MULTILINE)
     raw = re.sub(r"\s*```$",     "", raw, flags=re.MULTILINE)
@@ -148,13 +142,7 @@ def call_llm(messages: list[dict], catalog_context: str) -> dict:
         }
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
-
 def chat(messages: list[dict]) -> dict:
-    """
-    Called by FastAPI for every POST /chat request.
-    messages: full conversation history [{"role": "user"|"assistant", "content": "..."}]
-    """
     if not messages:
         return {
             "reply": "Hello! I can help you find the right SHL assessments. What role are you hiring for?",
@@ -162,7 +150,6 @@ def chat(messages: list[dict]) -> dict:
             "end_of_conversation": False,
         }
 
-    # Guardrail: check latest user message
     last_user = next(
         (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
     )
@@ -173,23 +160,17 @@ def chat(messages: list[dict]) -> dict:
             "end_of_conversation": False,
         }
 
-    # Retrieve relevant catalog items
     query   = extract_search_query(messages)
     items   = retrieve(query, n=15)
     context = build_catalog_context(items)
+    result  = call_llm(messages, context)
 
-    # Call LLM
-    result = call_llm(messages, context)
-
-    # CRITICAL URL sanitization — never let LLM hallucinate URLs
     valid_urls = {item["url"] for item in items}
     safe_recs  = [
         r for r in result.get("recommendations", [])
         if r.get("url") in valid_urls
     ]
     result["recommendations"] = safe_recs[:10]
-
-    # Ensure schema keys always exist
     result.setdefault("reply",               "How can I help you find the right assessment?")
     result.setdefault("recommendations",     [])
     result.setdefault("end_of_conversation", False)
